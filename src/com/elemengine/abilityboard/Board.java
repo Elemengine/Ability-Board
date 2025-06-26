@@ -14,18 +14,26 @@ import com.elemengine.elemengine.ability.AbilityInfo;
 import com.elemengine.elemengine.ability.type.Bindable;
 import com.elemengine.elemengine.ability.util.Cooldown;
 import com.elemengine.elemengine.user.PlayerUser;
+import com.elemengine.elemengine.util.spigot.Chat;
 
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.TextDecoration;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import net.md_5.bungee.api.ChatColor;
-import net.md_5.bungee.api.chat.BaseComponent;
 
 public class Board {
     
-    private final AbilityBoards provider;
+    public enum Mode {
+        TEXT, ICON; 
+    }
     
+    private final AbilityBoards provider;
     private final BoardSlot[] slots = new BoardSlot[9];
     private final PlayerUser user;
-    private int oldSlot;
     private final Scoreboard board;
+    
+    private int oldSlot;
+    private Mode mode = Mode.TEXT;
 
     Board(AbilityBoards provider, PlayerUser user) {
         this.provider = provider;
@@ -36,8 +44,22 @@ public class Board {
         Objective obj = board.registerNewObjective("ability_board", Criteria.DUMMY, ChatColor.translateAlternateColorCodes('&', provider.title));
         obj.setDisplaySlot(DisplaySlot.SIDEBAR);
         for (int i = 0; i < slots.length; ++i) {
-            slots[i] = new BoardSlot(board, obj, i).update("" + (oldSlot == i ? provider.arrowOverColor : provider.arrowIdleColor), provider.emptySlot);
+            slots[i] = new BoardSlot(board, obj, i).update("" + (oldSlot == i ? provider.arrowOverColor : provider.arrowIdleColor), Chat.fromLegacy(provider.emptySlot));
         }
+    }
+    
+    public Mode toggleMode() {
+        switch (mode) {
+            case TEXT -> {
+                mode = Mode.ICON;
+            }
+            case ICON -> {
+                mode = Mode.TEXT;
+            }
+        }
+        
+        this.update();
+        return mode;
     }
 
     public void hide() {
@@ -86,8 +108,21 @@ public class Board {
     }
 
     public void updateBind(int slot, AbilityInfo ability) {
-        ChatColor color = slot == oldSlot ? provider.arrowOverColor : provider.arrowIdleColor;
-        slots[slot].update(color + provider.arrow + (provider.spaceAfterArrow ? " " : ""), ability == null ? color + provider.emptySlot : ability.createComponent().toLegacyText());
+        String prefix = "", display = "";
+        
+        switch (mode) {
+            case TEXT -> {
+                ChatColor color = slot == oldSlot ? provider.arrowOverColor : provider.arrowIdleColor;
+                prefix = color + provider.arrow + (provider.spaceAfterArrow ? " " : "");
+                display = ability == null ? color + provider.emptySlot : Chat.toLegacy(ability.createComponent());
+            }
+            case ICON -> {
+                display = generateIcon(ability == null ? false : user.hasCooldown(ability), slot == oldSlot, ability);
+            }
+        }
+        
+        slots[slot].update(prefix, Chat.fromLegacy(display));
+        
         if (ability != null && user.hasCooldown(ability)) {
             bindCooldown(slot, true);
         }
@@ -115,12 +150,24 @@ public class Board {
 
     public void bindCooldown(int slot, boolean added) {
         user.getBinds().get(slot).ifPresent(ability -> {
-            BaseComponent info = ability.createComponent();
-            if (added) {
-                info.setStrikethrough(true);
+            switch (mode) {
+                case TEXT -> {
+                    Component info = ability.createComponent();
+                    if (added) {
+                        info = info.decorate(TextDecoration.STRIKETHROUGH);
+                    }
+                    slots[slot].team.suffix(info);
+                }
+                case ICON -> {
+                    String display = generateIcon(added, slot == oldSlot, ability);
+                    slots[slot].team.setSuffix(display);
+                }
             }
-            slots[slot].team.setSuffix(info.toLegacyText());
         });
+    }
+    
+    private String generateIcon(boolean strike, boolean hovered, AbilityInfo info) {
+        return IconUtil.translate(hovered, strike, info) + IconUtil.generateNegatives(4) + " ";
     }
 
     private static class BoardSlot {
@@ -139,10 +186,10 @@ public class Board {
 
             team.addEntry(entry);
         }
-
-        public BoardSlot update(String prefix, String name) {
+        
+        public BoardSlot update(String prefix, Component name) {
             team.setPrefix(prefix);
-            team.setSuffix(name);
+            team.suffix(name);
             obj.getScore(entry).setScore(-slot);
             return this;
         }
